@@ -584,8 +584,8 @@ async function persist(){
 }
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")sync()});
 
-// ---- Supabase: вход по коду из письма + хранение в таблице tracker ----
-let sb=null, uid=null, uemail="", authStep="email", authEmail="";
+// ---- Supabase: вход по почте и паролю + хранение в таблице tracker ----
+let sb=null, uid=null, uemail="", authEmail="";
 const esc=t=>String(t).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 function loadScript(src){return new Promise((ok,no)=>{const s=document.createElement("script");s.src=src;s.onload=ok;s.onerror=no;document.head.appendChild(s)})}
 async function startSupabase(){
@@ -619,34 +619,30 @@ function authUI(){
   }
   acct.textContent="Вход не выполнен — записи хранятся только на этом устройстве.";
   box.hidden=false;
-  box.innerHTML=authStep==="email"
-    ?`<p><b>Войди, чтобы записи были на всех устройствах.</b> Нужно один раз на каждом телефоне.</p>
-      <div class="authrow"><input id="au-email" type="email" autocomplete="email" placeholder="твоя почта" value="${esc(authEmail)}"><button class="primary" id="au-send">Получить код</button></div>
-      <div class="aumsg" id="au-msg"></div>`
-    :`<p>Код отправлен на <b>${esc(authEmail)}</b>. Введи его из письма:</p>
-      <div class="authrow"><input id="au-code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" maxlength="10"><button class="primary" id="au-ok">Войти</button></div>
-      <button class="lnk" id="au-back">Другая почта</button><div class="aumsg" id="au-msg"></div>`;
+  box.innerHTML=`<p><b>Войди, чтобы записи были на всех устройствах.</b> Нужно один раз на каждом телефоне.</p>
+    <div class="authrow"><input id="au-email" type="email" autocomplete="username" placeholder="почта" value="${esc(authEmail)}"></div>
+    <div class="authrow"><input id="au-pass" type="password" autocomplete="current-password" placeholder="пароль, минимум 6 символов"><button class="primary" id="au-in">Войти</button></div>
+    <button class="lnk" id="au-up">Первый раз? Создать аккаунт</button>
+    <div class="aumsg" id="au-msg"></div>`;
   const msg=(t,ok)=>{const m=document.getElementById("au-msg");m.textContent=t;m.classList.toggle("ok",!!ok)};
-  if(authStep==="email"){
-    document.getElementById("au-send").onclick=async()=>{
-      authEmail=document.getElementById("au-email").value.trim();
-      if(!/^\S+@\S+\.\S+$/.test(authEmail)){msg("Проверь почту — похоже, в ней опечатка");return}
-      msg("Отправляю…",true);
-      const {error}=await sb.auth.signInWithOtp({email:authEmail,options:{shouldCreateUser:true}});
-      if(error){msg(error.status===429?"Слишком часто. Подожди минуту и попробуй снова":"Не получилось отправить: "+error.message);return}
-      authStep="code"; authUI();
-    };
-  }else{
-    document.getElementById("au-back").onclick=()=>{authStep="email";authUI()};
-    document.getElementById("au-ok").onclick=async()=>{
-      const token=document.getElementById("au-code").value.replace(/\D/g,"");
-      if(token.length<6){msg("Введи код из письма целиком");return}
-      msg("Проверяю…",true);
-      const {data,error}=await sb.auth.verifyOtp({email:authEmail,token,type:"email"});
-      if(error){msg("Код не подошёл или устарел. Запроси новый");return}
-      authStep="email"; if(data?.user) connect(data.user);
-    };
-  }
+  const read=()=>{authEmail=document.getElementById("au-email").value.trim();const password=document.getElementById("au-pass").value;
+    if(!/^\S+@\S+\.\S+$/.test(authEmail)){msg("Проверь почту — похоже, в ней опечатка");return null}
+    if(password.length<6){msg("Пароль — минимум 6 символов");return null}
+    return {email:authEmail,password}};
+  document.getElementById("au-in").onclick=async()=>{
+    const c=read(); if(!c) return; msg("Вхожу…",true);
+    const {data,error}=await sb.auth.signInWithPassword(c);
+    if(error){msg(/confirm/i.test(error.message)?"Почта не подтверждена: выключи «Confirm email» в Supabase (см. README)":"Неверная почта или пароль. Если аккаунта ещё нет — нажми «Создать аккаунт»");return}
+    if(data?.user) connect(data.user);
+  };
+  document.getElementById("au-up").onclick=async()=>{
+    const c=read(); if(!c) return; msg("Создаю аккаунт…",true);
+    const {data,error}=await sb.auth.signUp(c);
+    if(error){msg(/registered|exists/i.test(error.message)?"Такой аккаунт уже есть — просто нажми «Войти»":"Не получилось: "+error.message);return}
+    if(data?.session?.user) connect(data.session.user);
+    else msg("Аккаунт создан, но Supabase ждёт подтверждения почты. Выключи «Confirm email» (см. README) и нажми «Войти»");
+  };
+  box.querySelector("#au-pass").onkeydown=e=>{if(e.key==="Enter")document.getElementById("au-in").click()};
 }
 
 // boot
